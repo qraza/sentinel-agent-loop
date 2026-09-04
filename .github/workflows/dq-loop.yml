@@ -67,7 +67,6 @@ jobs:
           git apply "${GITHUB_WORKSPACE}/demo/break_avg_speed.patch"
           git -c user.name=sentinel-loop -c user.email=loop@users.noreply.github.com \
               commit -am "demo: seed avg_speed_mph units regression"
-          git push -u origin "${{ steps.branch.outputs.name }}"
 
       - name: Load fixture data
         run: |
@@ -84,6 +83,12 @@ jobs:
           else
             echo "failed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Push working branch (failure path)
+        if: steps.build.outputs.failed == 'true'
+        run: |
+          cd "${TARGET_DIR}"
+          git push -u origin "${{ steps.branch.outputs.name }}"
 
       - name: Sentinel diagnosis
         if: steps.build.outputs.failed == 'true'
