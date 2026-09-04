@@ -1,0 +1,215 @@
+name: Data-quality loop
+
+# The loop: dbt build fails -> dbt-sentinel diagnoses -> Claude Code (grounded
+# via sentinel-mcp) proposes a fix PR on the target repo -> a human approves.
+# Nothing in this workflow can merge to main; the gate is branch protection
+# on the target repository.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1-5"          # weekday morning health check
+  workflow_dispatch:
+    inputs:
+      demo_break:
+        description: "Apply the seeded avg_speed_mph units bug before building (reproducible demo)"
+        type: boolean
+        default: false
+
+env:
+  TARGET_REPO: qraza/taxi-analytics-pipeline
+  TARGET_DIR: ${{ github.workspace }}/target-repo
+  DBT_DB_PATH: ${{ github.workspace }}/target-repo/data/capstone.duckdb
+
+jobs:
+  detect:
+    name: Build target project & detect failures
+    runs-on: ubuntu-latest
+    outputs:
+      failed: ${{ steps.build.outputs.failed }}
+      branch: ${{ steps.branch.outputs.name }}
+    steps:
+      - name: Checkout loop repo
+        uses: actions/checkout@v4
+
+      - name: Checkout target dbt project
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TARGET_REPO }}
+          token: ${{ secrets.TARGET_REPO_TOKEN }}   # fine-grained PAT: contents rw, pull-requests rw
+          path: target-repo
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install target project + sentinel
+        run: |
+          uv pip install --system -e "${TARGET_DIR}" --group dev
+          uv pip install --system dbt-sentinel
+
+      - name: Create working branch on target repo
+        id: branch
+        run: |
+          cd "${TARGET_DIR}"
+          NAME="sentinel/dq-${{ github.run_id }}"
+          git checkout -b "$NAME"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Apply demo break (optional)
+        if: inputs.demo_break
+        run: |
+          cd "${TARGET_DIR}"
+          git apply "${GITHUB_WORKSPACE}/demo/break_avg_speed.patch"
+          git -c user.name=sentinel-loop -c user.email=loop@users.noreply.github.com \
+              commit -am "demo: seed avg_speed_mph units regression"
+          git push -u origin "${{ steps.branch.outputs.name }}"
+
+      - name: Load fixture data
+        run: |
+          cd "${TARGET_DIR}"
+          mkdir -p data
+          python scripts/load_raw.py --source ci
+
+      - name: dbt build
+        id: build
+        run: |
+          cd "${TARGET_DIR}"
+          if dbt build --project-dir dbt_project --profiles-dir .ci; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sentinel diagnosis
+        if: steps.build.outputs.failed == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          cd "${TARGET_DIR}"
+          sentinel analyze \
+            --target-dir dbt_project/target \
+            --db data/capstone.duckdb \
+            --markdown "${GITHUB_WORKSPACE}/diagnosis.md"
+
+      - name: Upload evidence
+        if: steps.build.outputs.failed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dq-evidence
+          path: |
+            diagnosis.md
+            target-repo/dbt_project/target/run_results.json
+            target-repo/dbt_project/target/manifest.json
+            target-repo/data/capstone.duckdb
+
+  propose:
+    name: Agent proposes fix (human gate downstream)
+    needs: detect
+    if: needs.detect.outputs.failed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout loop repo
+        uses: actions/checkout@v4
+
+      - name: Checkout target repo on working branch
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TARGET_REPO }}
+          token: ${{ secrets.TARGET_REPO_TOKEN }}
+          path: target-repo
+          ref: ${{ needs.detect.outputs.branch }}
+          fetch-depth: 0
+
+      - name: Download evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: dq-evidence
+          path: evidence
+
+      - name: Restore artifacts into target project
+        run: |
+          mkdir -p "${TARGET_DIR}/dbt_project/target" "${TARGET_DIR}/data"
+          cp evidence/target-repo/dbt_project/target/*.json "${TARGET_DIR}/dbt_project/target/"
+          cp evidence/target-repo/data/capstone.duckdb "${TARGET_DIR}/data/"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install target project + sentinel-mcp
+        run: |
+          uv pip install --system -e "${TARGET_DIR}" --group dev
+          # sentinel-mcp isn't on PyPI (yet) — install from GitHub
+          uv pip install --system dbt-sentinel "sentinel-mcp @ git+https://github.com/qraza/sentinel-mcp"
+
+      - name: Write MCP config
+        run: |
+          cat > mcp.json <<JSON
+          {
+            "mcpServers": {
+              "sentinel": {
+                "command": "sentinel-mcp",
+                "env": {
+                  "DBT_TARGET_DIR": "${TARGET_DIR}/dbt_project/target",
+                  "DBT_DUCKDB_PATH": "${DBT_DB_PATH}"
+                }
+              }
+            }
+          }
+          JSON
+
+      - name: Build agent prompt
+        id: build_prompt
+        run: |
+          DIAGNOSIS="$(cat evidence/diagnosis.md)"
+          BRANCH="${{ needs.detect.outputs.branch }}"
+          delimiter="PROMPT_EOF"
+          {
+            echo "prompt<<${delimiter}"
+            sed -e "s|{{BRANCH}}|${BRANCH}|g" prompts/fix_prompt.md
+            echo ""
+            echo "## Sentinel diagnosis (grounded evidence)"
+            echo ""
+            echo "$DIAGNOSIS"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude Code agent
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: ${{ steps.build_prompt.outputs.prompt }}
+          show_full_output: true
+          claude_args: |
+            --max-turns 80
+            --mcp-config mcp.json
+            --allowedTools "mcp__sentinel__run_summary,mcp__sentinel__list_failing_tests,mcp__sentinel__sample_failing_rows,mcp__sentinel__explain_failure,mcp__sentinel__model_lineage,mcp__sentinel__test_history,Bash(git:*),Bash(gh:*),Bash(uv:*),Bash(python:*),Bash(pytest:*),Bash(ruff:*),Bash(dbt:*),Bash(ls:*),Bash(cat:*),Bash(cd:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(grep:*),Bash(echo:*),Bash(sed:*),Bash(diff:*),Bash(pwd:*),Bash(jq:*),Edit,MultiEdit,Write,Read,Glob,Grep,TodoWrite"
+            --disallowedTools "Edit(.github/workflows/**),Write(.github/workflows/**),Edit(.env*),Write(.env*),Edit(.ci/**),Write(.ci/**)"
+
+      - name: Report PR link
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
+        run: |
+          PR_URL=$(gh pr list --repo "${TARGET_REPO}" \
+            --head "${{ needs.detect.outputs.branch }}" --base main \
+            --json url --jq '.[0].url // empty')
+          if [ -n "$PR_URL" ]; then
+            echo "### Fix proposed, awaiting human approval: $PR_URL" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Agent stopped before opening a PR — see run log" >> "$GITHUB_STEP_SUMMARY"
+          fi
