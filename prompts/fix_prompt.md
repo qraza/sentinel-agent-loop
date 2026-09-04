@@ -25,11 +25,17 @@ You do NOT merge anything — a human reviews every change.
 
 # Deliverable
 
-Commit with a clear message, push `{{BRANCH}}`, then open a PR to `main` with
-`gh pr create` containing:
+Commit with a clear message and push `{{BRANCH}}`. Do NOT try to open the pull
+request yourself — you have no GitHub API access by design; a workflow step
+opens the PR after you finish, using files you leave behind.
 
-- **What failed** — the test(s) and the observed symptom.
-- **Root cause** — with the evidence that supports it (cite sentinel findings).
-- **The fix** — and why it targets the cause rather than the test.
-- **Proof** — the commands run and their results.
-- A closing line: *"Proposed by the sentinel agent loop; requires human approval."*
+In the repository root (your working directory — NOT inside `target-repo/`),
+write exactly two files:
+
+- `pr_title.txt` — a single line: the PR title.
+- `pr_body.md` — the PR description, containing:
+  - **What failed** — the test(s) and the observed symptom.
+  - **Root cause** — with the evidence that supports it (cite sentinel findings).
+  - **The fix** — and why it targets the cause rather than the test.
+  - **Proof** — the commands run and their results.
+  - A closing line: *"Proposed by the sentinel agent loop; requires human approval."*

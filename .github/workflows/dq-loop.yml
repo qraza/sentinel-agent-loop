@@ -188,8 +188,6 @@ jobs:
 
       - name: Run Claude Code agent
         uses: anthropics/claude-code-action@v1
-        env:
-          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: ${{ steps.build_prompt.outputs.prompt }}
@@ -197,19 +195,19 @@ jobs:
           claude_args: |
             --max-turns 80
             --mcp-config mcp.json
-            --allowedTools "mcp__sentinel__run_summary,mcp__sentinel__list_failing_tests,mcp__sentinel__sample_failing_rows,mcp__sentinel__explain_failure,mcp__sentinel__model_lineage,mcp__sentinel__test_history,Bash(git:*),Bash(gh:*),Bash(uv:*),Bash(python:*),Bash(pytest:*),Bash(ruff:*),Bash(dbt:*),Bash(ls:*),Bash(cat:*),Bash(cd:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(grep:*),Bash(echo:*),Bash(sed:*),Bash(diff:*),Bash(pwd:*),Bash(jq:*),Edit,MultiEdit,Write,Read,Glob,Grep,TodoWrite"
+            --allowedTools "mcp__sentinel__run_summary,mcp__sentinel__list_failing_tests,mcp__sentinel__sample_failing_rows,mcp__sentinel__explain_failure,mcp__sentinel__model_lineage,mcp__sentinel__test_history,Bash(git:*),Bash(uv:*),Bash(python:*),Bash(pytest:*),Bash(ruff:*),Bash(dbt:*),Bash(ls:*),Bash(cat:*),Bash(cd:*),Bash(find:*),Bash(head:*),Bash(tail:*),Bash(grep:*),Bash(echo:*),Bash(sed:*),Bash(diff:*),Bash(pwd:*),Bash(jq:*),Edit,MultiEdit,Write,Read,Glob,Grep,TodoWrite"
             --disallowedTools "Edit(.github/workflows/**),Write(.github/workflows/**),Edit(.env*),Write(.env*),Edit(.ci/**),Write(.ci/**)"
 
-      - name: Report PR link
+      - name: Open PR with loop credentials (agent has none, by design)
         if: always()
         env:
           GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }}
         run: |
-          PR_URL=$(gh pr list --repo "${TARGET_REPO}" \
-            --head "${{ needs.detect.outputs.branch }}" --base main \
-            --json url --jq '.[0].url // empty')
-          if [ -n "$PR_URL" ]; then
+          if [ -f pr_title.txt ] && [ -f pr_body.md ]; then
+            PR_URL=$(gh pr create --repo "${TARGET_REPO}" \
+              --head "${{ needs.detect.outputs.branch }}" --base main \
+              --title "$(cat pr_title.txt)" --body-file pr_body.md)
             echo "### Fix proposed, awaiting human approval: $PR_URL" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "### Agent stopped before opening a PR — see run log" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Agent finished without proposing a fix — see run log" >> "$GITHUB_STEP_SUMMARY"
           fi
