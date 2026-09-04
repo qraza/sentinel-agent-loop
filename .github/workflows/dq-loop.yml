@@ -49,7 +49,7 @@ jobs:
 
       - name: Install target project + sentinel
         run: |
-          uv pip install --system -e "${TARGET_DIR}" --group dev
+          cd "${TARGET_DIR}" && uv pip install --system -e . --group dev
           uv pip install --system dbt-sentinel
 
       - name: Create working branch on target repo
@@ -150,7 +150,7 @@ jobs:
 
       - name: Install target project + sentinel-mcp
         run: |
-          uv pip install --system -e "${TARGET_DIR}" --group dev
+          cd "${TARGET_DIR}" && uv pip install --system -e . --group dev
           # sentinel-mcp isn't on PyPI (yet) — install from GitHub
           uv pip install --system dbt-sentinel "sentinel-mcp @ git+https://github.com/qraza/sentinel-mcp"
 
