@@ -48,9 +48,11 @@ every speed 60×). The loop, run in its normal scheduled mode:
 All runs are public:
 [workflow history](https://github.com/qraza/sentinel-agent-loop/actions/workflows/dq-loop.yml).
 
-<!-- screenshots: docs/img/blocked-merge.png (Merging is blocked / Review
-     required) and docs/img/run-summary.png (Fix proposed, awaiting human
-     approval) -->
+![The loop fires: fix proposed, awaiting human approval](docs/img/run-summary.png)
+
+![Merge blocked at the human gate](docs/img/blocked-merge.png)
+
+![The agent's evidence-cited fix, merged after human approval](docs/img/merged-fix.png)
 
 ## Why the governance controls exist
 
