@@ -2,16 +2,17 @@
 
 ## 1. One-time change to the target repo
 
-Apply `demo/prereq_add_speed_floor.patch` to `taxi-analytics-pipeline` and
-merge it to `main` (normal PR). It upgrades
-`dbt_project/tests/assert_int_trips_enriched_speed_within_bounds.sql` with a
-1 mph plausibility floor for sustained trips. Without it, the demo's seeded
-units bug passes silently — an upper bound alone cannot detect a uniform
-shrink.
+Apply `demo/prereq_add_median_guard.patch` to `taxi-analytics-pipeline` and
+merge it to `main` (normal PR). It adds
+`assert_int_trips_enriched_speed_distribution_sane.sql`, a distribution-level
+guard asserting the median trip speed stays plausible. Without it, a uniform
+units regression passes silently: row-level bounds can't detect a systemic
+shrink, and a naive row-level lower bound false-positives on legitimate
+gridlock crawls.
 
 ```bash
 cd taxi-analytics-pipeline
-git apply ../sentinel-agent-loop/demo/prereq_add_speed_floor.patch
+git apply ../sentinel-agent-loop/demo/prereq_add_median_guard.patch
 ```
 
 ## 2. Secrets (on this repo)
@@ -22,8 +23,15 @@ git apply ../sentinel-agent-loop/demo/prereq_add_speed_floor.patch
 | `ANTHROPIC_API_KEY` | Used by `sentinel analyze` in the detect job |
 | `TARGET_REPO_TOKEN` | Fine-grained PAT, **scoped to `qraza/taxi-analytics-pipeline` only**, permissions: Contents (read/write), Pull requests (read/write). Nothing else. |
 
-The narrow PAT scope is part of the security story: even a fully compromised
-agent run can only touch one repo, on a branch, behind review.
+The narrow PAT scope is part of the security story — and the agent itself
+never sees it: the PAT lives only in workflow steps (checkout, push, PR
+creation), while the agent has no GitHub API access at all.
+
+Because the PAT acts as the repo owner, GitHub treats the owner as the PR
+author and blocks self-approval; on a single-maintainer repo, merge the
+agent's PRs with the audited "bypass rules" option after reviewing. A team
+reviewer, or a dedicated GitHub App identity for the loop, removes that
+limitation.
 
 ## 3. The human gate (target repo)
 
@@ -51,5 +59,6 @@ agent error, or workflow bug can route around it.
   publish it, swap the install line in `dq-loop.yml` back to
   `uv pip install --system dbt-sentinel sentinel-mcp` — publishing is worth
   doing anyway; it strengthens the "reusable components" story.
+- Also install the Claude Code GitHub App (github.com/apps/claude) on BOTH repos — the action refuses to run where it isn't installed.
 - Scheduled runs on a green build exit quietly by design — the loop is a
   tripwire, not a chatterbox.
