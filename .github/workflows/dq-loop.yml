@@ -156,7 +156,7 @@ jobs:
       - name: Install target project + sentinel-mcp
         run: |
           cd "${TARGET_DIR}" && uv pip install --system -e . --group dev
-          # sentinel-mcp isn't on PyPI (yet) — install from GitHub
+          # install from GitHub; the PyPI package named sentinel-mcp is unrelated
           uv pip install --system dbt-sentinel "sentinel-mcp @ git+https://github.com/qraza/sentinel-mcp"
 
       - name: Write MCP config

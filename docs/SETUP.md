@@ -55,10 +55,7 @@ agent error, or workflow bug can route around it.
 - The detect job uploads `capstone.duckdb` as an artifact so the propose job's
   MCP server samples the same warehouse state that failed. If the fixture
   grows, switch to rebuilding it in the propose job instead.
-- `sentinel-mcp` is installed from GitHub (it isn't on PyPI). When you
-  publish it, swap the install line in `dq-loop.yml` back to
-  `uv pip install --system dbt-sentinel sentinel-mcp` — publishing is worth
-  doing anyway; it strengthens the "reusable components" story.
+- `sentinel-mcp` is installed from GitHub; it isn't on PyPI (the PyPI package with that name is unrelated).
 - Also install the Claude Code GitHub App (github.com/apps/claude) on BOTH repos — the action refuses to run where it isn't installed.
 - Scheduled runs on a green build exit quietly by design — the loop is a
   tripwire, not a chatterbox.
